@@ -35,7 +35,33 @@ export async function POST(req: Request) {
 
   await connectDB();
 
-  const { items, total } = await req.json();
+  const { items, total, promocode } = await req.json();
+  let appliedDiscount = 0;
+  let appliedPromoId: string | undefined;
+  let finalTotal = total;
+
+  if (promocode) {
+    try {
+      const base = process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+      const res = await fetch(`${base}/api/promos/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: promocode, total })
+      });
+      const data = await res.json();
+      if (res.ok && data && data.valid) {
+        appliedDiscount = data.discount || 0;
+        appliedPromoId = data.promoId;
+        finalTotal = Math.max(0, Math.round((total - appliedDiscount) * 100) / 100);
+      } else {
+        const reason = data?.reason || data?.error || 'Invalid promocode';
+        return NextResponse.json({ error: reason }, { status: 400 });
+      }
+    } catch (err) {
+      logger.warn('promo.validation_error', { error: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: 'Promo validation failed' }, { status: 400 });
+    }
+  }
   const MAX_RETRIES = 50;
   let retryCount = 0;
 
@@ -54,9 +80,15 @@ export async function POST(req: Request) {
         const order = await OrderModel.create({
           user: user._id,
           items,
-          total,
+          total: finalTotal,
           status: 'PENDING'
         });
+
+        if (appliedPromoId) {
+          try {
+            await (await import('@/lib/db')).PromoModel.findByIdAndUpdate(appliedPromoId, { $inc: { timesUsed: 1 } });
+          } catch {}
+        }
 
         logger.info('order.created', { user_id: user._id.toString(), order_id: order._id.toString(), total });
         metrics.observeHistogram('http_request_duration_ms', Date.now() - startTime, { path: '/api/orders' });
@@ -100,12 +132,18 @@ export async function POST(req: Request) {
         if (!med) throw new Error('Недостатньо товару');
       }
 
-      const order = await OrderModel.create([{
+        const order = await OrderModel.create([{
         user: user._id,
         items,
-        total,
+        total: finalTotal,
         status: 'PENDING'
       }], { session });
+
+      if (appliedPromoId) {
+        try {
+          await (await import('@/lib/db')).PromoModel.findByIdAndUpdate(appliedPromoId, { $inc: { timesUsed: 1 } }, { session });
+        } catch {}
+      }
 
       await session.commitTransaction();
       session.endSession();

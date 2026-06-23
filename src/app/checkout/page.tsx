@@ -1,7 +1,9 @@
-'use client';
+"use client";
+import { useState } from 'react';
 import { useCartStore } from '@/lib/store/cartStore';
 import { useAuthStore } from '@/lib/store/authStore';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { CreditCard, CheckCircle2 } from 'lucide-react';
@@ -11,13 +13,25 @@ export default function CheckoutPage() {
   const { user } = useAuthStore();
   const router = useRouter();
   const total = items.reduce((a, i) => a + i.price * i.quantity, 0);
+  const [promoCode, setPromoCode] = useState('');
+  const [applied, setApplied] = useState<{ code: string; promoId?: string; discount: number; newTotal: number } | null>(null);
+  const [validating, setValidating] = useState(false);
 
   const handleOrder = async () => {
     if (!user) return router.push('/login');
     try {
+      type OrderPayload = { items: { medication: string; quantity: number; price: number }[]; total: number; user: string; promocode?: string };
+      const payload: OrderPayload = {
+        items: items.map(i => ({ medication: i._id, quantity: i.quantity, price: i.price })),
+        total: applied ? applied.newTotal : total,
+        user: user._id,
+      };
+      if (applied?.code) payload.promocode = applied.code;
+
       const res = await fetch('/api/orders', {
         method: 'POST',
-        body: JSON.stringify({ items: items.map(i => ({ medication: i._id, quantity: i.quantity, price: i.price })), total, user: user._id })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (res.ok) {
@@ -46,9 +60,39 @@ export default function CheckoutPage() {
             </div>
           ))}
         </div>
-        <div className="border-t pt-4 font-bold flex justify-between text-lg">
-          <span>Разом:</span>
-          <span className="text-primary">{total} ₴</span>
+        <div className="pt-4 space-y-3">
+          <div className="flex gap-2">
+            <Input placeholder="Промокод (за бажанням)" value={promoCode} onChange={e => setPromoCode(e.target.value)} />
+            {!applied ? (
+              <Button onClick={async () => {
+                if (!promoCode) return toast.error('Введіть код');
+                setValidating(true);
+                try {
+                  const res = await fetch('/api/promos/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: promoCode, total }) });
+                  const data = await res.json();
+                  if (res.ok && data.valid) {
+                    setApplied({ code: promoCode.trim().toUpperCase(), promoId: data.promoId, discount: data.discount, newTotal: data.newTotal });
+                    toast.success('Промокод застосовано');
+                  } else {
+                    toast.error(data.reason || data.error || 'Невірний код');
+                  }
+                } catch {
+                  toast.error('Мережева помилка');
+                } finally { setValidating(false); }
+              }} disabled={validating}>Застосувати</Button>
+            ) : (
+              <Button variant="outline" onClick={() => { setApplied(null); setPromoCode(''); }}>Видалити</Button>
+            )}
+          </div>
+
+          <div className="border-t pt-2 font-bold flex justify-between text-lg">
+            <span>Разом:</span>
+            <span className="text-primary">{applied ? `${applied.newTotal} ₴` : `${total} ₴`}</span>
+          </div>
+
+          {applied && (
+            <div className="text-sm text-green-700">Знижка: -{applied.discount} ₴</div>
+          )}
         </div>
       </div>
       <Button className="w-full h-12 text-lg font-bold shadow-lg" onClick={handleOrder}>

@@ -1,5 +1,5 @@
 import { model, models, Schema } from 'mongoose';
-import { User, Medication, Order, OrderItem, Category } from './types';
+import { User, Medication, Order, OrderItem, Category, PromoCode } from './types';
 
 const userSchema = new Schema<User>({
   phone: { type: String, required: true, unique: true },
@@ -37,7 +37,19 @@ const orderSchema = new Schema<Order>({
   status: { type: String, enum: ['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED'], default: 'PENDING' },
 }, { timestamps: true });
 
+const promoCodeSchema = new Schema<PromoCode>({
+  code: { type: String, required: true, unique: true },
+  type: { type: String, enum: ['PERCENT', 'AMOUNT'], required: true },
+  value: { type: Number, required: true, min: 0 },
+  minTotal: { type: Number, min: 0 },
+  expiresAt: { type: Date },
+  maxUses: { type: Number, min: 0 },
+  timesUsed: { type: Number, default: 0 },
+  active: { type: Boolean, default: true },
+}, { timestamps: true });
+
 export const UserModel = models.User || model<User>('User', userSchema);
 export const CategoryModel = models.Category || model<Category>('Category', categorySchema);
 export const MedicationModel = models.Medication || model<Medication>('Medication', medicationSchema);
 export const OrderModel = models.Order || model<Order>('Order', orderSchema);
+export const PromoModel = models.Promo || model<PromoCode>('Promo', promoCodeSchema);
