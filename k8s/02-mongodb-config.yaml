@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongodb-init-configmap
+  labels:
+    app: iapteca
+data:
+  init-users.js: |
+    // Switch to iapteca database
+    db = db.getSiblingDB('iapteca');
+    
+    // Create read-only user for product-catalog microservice
+    db.createUser({
+      user: 'catalog_user',
+      pwd: 'catalog_password_secure',
+      roles: [
+        { role: 'read', db: 'iapteca' }
+      ]
+    });
+    
+    // Create read-write user for order-processing microservice
+    db.createUser({
+      user: 'order_user',
+      pwd: 'order_password_secure',
+      roles: [
+        { role: 'readWrite', db: 'iapteca' }
+      ]
+    });
+    
+    print("Database users for 'iapteca' created successfully.");
