@@ -1,5 +1,7 @@
 import { connectDB, MedicationModel, OrderModel, UserModel } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+
 export default async function AdminPage() {
   await connectDB();
   const [meds, orders, users] = await Promise.all([

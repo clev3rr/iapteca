@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  labels:
+    app: iapteca
+    component: mongodb
+spec:
+  ports:
+    - port: 27017
+      targetPort: 27017
+      name: mongodb
+  selector:
+    app: iapteca
+    component: mongodb
+  clusterIP: None # Headless service for stable pod network identities
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  labels:
+    app: iapteca
+    component: mongodb
+spec:
+  serviceName: mongodb-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iapteca
+      component: mongodb
+  template:
+    metadata:
+      labels:
+        app: iapteca
+        component: mongodb
+    spec:
+      containers:
+        - name: mongodb
+          image: mongo:7.0
+          args: ["--bind_ip_all", "--replSet", "rs0"]
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: iapteca-secrets
+                  key: mongodb-root-username
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: iapteca-secrets
+                  key: mongodb-root-password
+            - name: MONGO_INITDB_DATABASE
+              value: iapteca
+          ports:
+            - containerPort: 27017
+              name: mongodb
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
+          # Lifecycle hook to initiate the single-node replica set automatically
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/bash
+                  - -c
+                  - |
+                    # Wait for MongoDB to start responding on port 27017
+                    until mongosh --port 27017 --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
+                      sleep 2
+                    done
+                    
+                    # Initiate the replica set if not already initiated
+                    mongosh --port 27017 --username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --quiet --eval "
+                      try {
+                        rs.status();
+                        print('Replica set already initiated.');
+                      } catch (e) {
+                        print('Initiating replica set rs0...');
+                        var res = rs.initiate({
+                          _id: 'rs0',
+                          members: [{ _id: 0, host: 'mongodb-0.mongodb-service:27017' }]
+                        });
+                        print(JSON.stringify(res));
+                      }
+                    "
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "mongosh --port 27017 --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --quiet --eval \"db.adminCommand('ping')\""
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - "mongosh --port 27017 --username \"$MONGO_INITDB_ROOT_USERNAME\" --password \"$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --quiet --eval \"db.adminCommand('ping')\""
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: mongodb-init-configmap
+  volumeClaimTemplates:
+    - metadata:
+        name: mongodb-data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 2Gi

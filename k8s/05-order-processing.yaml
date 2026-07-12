@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-processing-service
+  labels:
+    app: iapteca
+    component: order-processing
+spec:
+  type: NodePort
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30081
+      name: http
+  selector:
+    app: iapteca
+    component: order-processing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-processing
+  labels:
+    app: iapteca
+    component: order-processing
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: iapteca
+      component: order-processing
+  template:
+    metadata:
+      labels:
+        app: iapteca
+        component: order-processing
+    spec:
+      containers:
+        - name: order-processing
+          image: bouncytorch/iapteca:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: iapteca-secrets
+                  key: order-processing-dsn
+            - name: NODE_ENV
+              value: production
+            - name: BASE_URL
+              value: http://order-processing-service:3000
+          ports:
+            - containerPort: 3000
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /api/metrics
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/metrics
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
